@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from libsql_client import create_client
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi import Query
 
 app = FastAPI()
 app.add_middleware(
@@ -37,10 +38,20 @@ async def create_ticket(ticket: Ticket):
     ticket_id = result.last_insert_rowid
     return {**ticket.dict(), "ticket_id": ticket_id}
 
+
+
 @app.get("/tickets/", response_model=list[Ticket])
-async def read_tickets():
-    rows = await client.execute("SELECT * FROM customers")
-    return [Ticket(**dict(row)) for row in rows]
+async def read_tickets(pending: bool = Query(False)):
+    # Build query based on pending param
+    query = "SELECT * FROM customers"
+    if pending:
+        query += " WHERE status = 'pending'"
+    result = await client.execute(query)
+    # result is a ResultSet object; get rows and columns
+    rows = result.rows
+    columns = result.columns
+    tickets = [Ticket(**dict(zip(columns, row))) for row in rows]
+    return tickets
 
 @app.put("/tickets/{ticket_id}", response_model=Ticket)
 async def update_ticket(ticket_id: int, ticket: Ticket):
