@@ -1,6 +1,6 @@
 "use client"
-
-import { useState, useEffect } from "react"
+import { fetchTickets, createTicket, updateTicket, deleteTicket, type Ticket } from "@/lib/api"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -24,13 +24,11 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
-  Loader2,
   BarChart3,
   TrendingUp,
 } from "lucide-react"
-import { getTickets, addTicket, updateTicket, getAgents } from "@/lib/storage"
-import { performAITriage } from "@/lib/ai-triage"
-import type { Ticket, TicketStatus } from "@/lib/types"
+
+type TicketStatus = "open" | "in-progress" | "resolved" | "closed"
 
 const priorityColors = {
   P0: "bg-red-100 text-red-800 border-red-200",
@@ -54,20 +52,23 @@ export default function Dashboard() {
   const [priorityFilter, setPriorityFilter] = useState<string>("all")
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [isTriaging, setIsTriaging] = useState<string | null>(null)
-
-  // Form state for new ticket
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [editTicket, setEditTicket] = useState<Ticket | null>(null)
   const [newTicket, setNewTicket] = useState({
+    ticket_name: "",
     title: "",
     description: "",
-    customerName: "",
-    customerEmail: "",
+    customer_name: "",
+    customer_email: "",
   })
+  const isMounted = useRef(false)
 
   useEffect(() => {
-    const loadedTickets = getTickets()
-    setTickets(loadedTickets)
-    setFilteredTickets(loadedTickets)
+    fetchTickets().then((data) => {
+      setTickets(data)
+      setFilteredTickets(data)
+    })
+    isMounted.current = true
   }, [])
 
   useEffect(() => {
@@ -78,7 +79,7 @@ export default function Dashboard() {
         (ticket) =>
           ticket.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ticket.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          ticket.customerName.toLowerCase().includes(searchTerm.toLowerCase()),
+          ticket.customer_name.toLowerCase().includes(searchTerm.toLowerCase()),
       )
     }
 
@@ -103,50 +104,37 @@ export default function Dashboard() {
   }
 
   const handleCreateTicket = async () => {
-    if (!newTicket.title || !newTicket.description || !newTicket.customerEmail) return
-
-    const ticket = addTicket({
-      ...newTicket,
-      status: "open" as TicketStatus,
-    })
-
+    if (!newTicket.title || !newTicket.description || !newTicket.customer_email) return
+    const ticketData = {
+      ticket_name: newTicket.ticket_name,
+      title: newTicket.title,
+      description: newTicket.description,
+      customer_name: newTicket.customer_name,
+      customer_email: newTicket.customer_email,
+      status: "open",
+    }
+    const ticket = await createTicket(ticketData)
     setTickets([ticket, ...tickets])
-    setNewTicket({ title: "", description: "", customerName: "", customerEmail: "" })
+    setNewTicket({ ticket_name: "", title: "", description: "", customer_name: "", customer_email: "" })
     setIsCreateDialogOpen(false)
   }
 
-  const handleTriageTicket = async (ticketId: string) => {
-    setIsTriaging(ticketId)
-    const ticket = tickets.find((t) => t.id === ticketId)
-    if (!ticket) return
-
-    try {
-      const agents = getAgents()
-      const triageResult = await performAITriage(ticket, agents)
-
-      const updatedTicket = updateTicket(ticketId, {
-        priority: triageResult.priority,
-        priorityReason: triageResult.priorityReason,
-        suggestedAssignee: triageResult.suggestedAssignee,
-        assignmentReason: triageResult.assignmentReason,
-        aiResponse: triageResult.aiResponse,
-      })
-
-      if (updatedTicket) {
-        setTickets(tickets.map((t) => (t.id === ticketId ? updatedTicket : t)))
-      }
-    } catch (error) {
-      console.error("Triage failed:", error)
-    } finally {
-      setIsTriaging(null)
-    }
+  const handleEditTicket = async () => {
+    if (!editTicket) return
+    const updated = await updateTicket(editTicket.ticket_id, editTicket)
+    setTickets(tickets.map((t) => (t.ticket_id === updated.ticket_id ? updated : t)))
+    setIsEditDialogOpen(false)
+    setEditTicket(null)
   }
 
-  const handleStatusChange = (ticketId: string, newStatus: TicketStatus) => {
-    const updatedTicket = updateTicket(ticketId, { status: newStatus })
-    if (updatedTicket) {
-      setTickets(tickets.map((t) => (t.id === ticketId ? updatedTicket : t)))
-    }
+  const handleDeleteTicket = async (ticket_id: number) => {
+    await deleteTicket(ticket_id)
+    setTickets(tickets.filter((t) => t.ticket_id !== ticket_id))
+  }
+
+  const handleStatusChange = async (ticket_id: number, newStatus: TicketStatus) => {
+    const updated = await updateTicket(ticket_id, { ...tickets.find(t => t.ticket_id === ticket_id), status: newStatus })
+    setTickets(tickets.map((t) => (t.ticket_id === ticket_id ? updated : t)))
   }
 
   const getStatusIcon = (status: TicketStatus) => {
@@ -186,6 +174,15 @@ export default function Dashboard() {
                 </DialogHeader>
                 <div className="space-y-4">
                   <div>
+                    <Label htmlFor="ticket_name">Ticket Name</Label>
+                    <Input
+                      id="ticket_name"
+                      value={newTicket.ticket_name}
+                      onChange={(e) => setNewTicket({ ...newTicket, ticket_name: e.target.value })}
+                      placeholder="Ticket name"
+                    />
+                  </div>
+                  <div>
                     <Label htmlFor="title">Title</Label>
                     <Input
                       id="title"
@@ -206,21 +203,21 @@ export default function Dashboard() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="customerName">Customer Name</Label>
+                      <Label htmlFor="customer_name">Customer Name</Label>
                       <Input
-                        id="customerName"
-                        value={newTicket.customerName}
-                        onChange={(e) => setNewTicket({ ...newTicket, customerName: e.target.value })}
+                        id="customer_name"
+                        value={newTicket.customer_name}
+                        onChange={(e) => setNewTicket({ ...newTicket, customer_name: e.target.value })}
                         placeholder="John Doe"
                       />
                     </div>
                     <div>
-                      <Label htmlFor="customerEmail">Customer Email</Label>
+                      <Label htmlFor="customer_email">Customer Email</Label>
                       <Input
-                        id="customerEmail"
+                        id="customer_email"
                         type="email"
-                        value={newTicket.customerEmail}
-                        onChange={(e) => setNewTicket({ ...newTicket, customerEmail: e.target.value })}
+                        value={newTicket.customer_email}
+                        onChange={(e) => setNewTicket({ ...newTicket, customer_email: e.target.value })}
                         placeholder="john@example.com"
                       />
                     </div>
@@ -337,7 +334,7 @@ export default function Dashboard() {
             </Card>
           ) : (
             filteredTickets.map((ticket) => (
-              <Card key={ticket.id} className="hover:shadow-md transition-shadow cursor-pointer">
+              <Card key={ticket.ticket_id} className="hover:shadow-md transition-shadow cursor-pointer">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -346,13 +343,13 @@ export default function Dashboard() {
                     </div>
                     <div className="flex flex-col gap-2 ml-4">
                       {ticket.priority && (
-                        <Badge className={priorityColors[ticket.priority]} variant="outline">
+                        <Badge className={priorityColors[ticket.priority as keyof typeof priorityColors] ?? ""} variant="outline">
                           {ticket.priority}
                         </Badge>
                       )}
-                      <Badge className={statusColors[ticket.status]} variant="outline">
-                        {getStatusIcon(ticket.status)}
-                        <span className="ml-1 capitalize">{ticket.status.replace("-", " ")}</span>
+                      <Badge className={statusColors[ticket.status as keyof typeof statusColors] ?? ""} variant="outline">
+                        {ticket.status ? getStatusIcon(ticket.status as TicketStatus) : null}
+                        <span className="ml-1 capitalize">{ticket.status?.replace("-", " ")}</span>
                       </Badge>
                     </div>
                   </div>
@@ -362,37 +359,17 @@ export default function Dashboard() {
                     <div className="flex items-center gap-4 text-sm text-slate-600">
                       <div className="flex items-center gap-1">
                         <User className="w-4 h-4" />
-                        {ticket.customerName}
+                        {ticket.customer_name}
                       </div>
                       <div className="flex items-center gap-1">
                         <Clock className="w-4 h-4" />
-                        {new Date(ticket.createdAt).toLocaleDateString()}
+                        Ticket #{ticket.ticket_id}
                       </div>
-                      {ticket.suggestedAssignee && (
-                        <div className="text-blue-600">Assigned: {ticket.suggestedAssignee}</div>
-                      )}
                     </div>
                     <div className="flex gap-2">
-                      {!ticket.priority && (
-                        <Button
-                          size="sm"
-                          onClick={() => handleTriageTicket(ticket.id)}
-                          disabled={isTriaging === ticket.id}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {isTriaging === ticket.id ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Triaging...
-                            </>
-                          ) : (
-                            "AI Triage"
-                          )}
-                        </Button>
-                      )}
                       <Select
                         value={ticket.status}
-                        onValueChange={(value) => handleStatusChange(ticket.id, value as TicketStatus)}
+                        onValueChange={(value) => handleStatusChange(ticket.ticket_id, value as TicketStatus)}
                       >
                         <SelectTrigger className="w-[130px]">
                           <SelectValue />
@@ -406,6 +383,12 @@ export default function Dashboard() {
                       </Select>
                       <Button variant="outline" size="sm" onClick={() => setSelectedTicket(ticket)}>
                         View Details
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => { setEditTicket(ticket); setIsEditDialogOpen(true); }}>
+                        Edit
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => handleDeleteTicket(ticket.ticket_id)}>
+                        Delete
                       </Button>
                     </div>
                   </div>
@@ -422,18 +405,18 @@ export default function Dashboard() {
           <DialogContent className="sm:max-w-[700px] max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-xl">{selectedTicket.title}</DialogTitle>
-              <DialogDescription>Ticket #{selectedTicket.id}</DialogDescription>
+              <DialogDescription>Ticket #{selectedTicket.ticket_id}</DialogDescription>
             </DialogHeader>
             <div className="space-y-6">
               <div className="flex gap-2">
                 {selectedTicket.priority && (
-                  <Badge className={priorityColors[selectedTicket.priority]} variant="outline">
+                  <Badge className={priorityColors[selectedTicket.priority as keyof typeof priorityColors] ?? ""} variant="outline">
                     {selectedTicket.priority}
                   </Badge>
                 )}
-                <Badge className={statusColors[selectedTicket.status]} variant="outline">
-                  {getStatusIcon(selectedTicket.status)}
-                  <span className="ml-1 capitalize">{selectedTicket.status.replace("-", " ")}</span>
+                <Badge className={statusColors[selectedTicket.status as keyof typeof statusColors] ?? ""} variant="outline">
+                  {selectedTicket.status ? getStatusIcon(selectedTicket.status as TicketStatus) : null}
+                  <span className="ml-1 capitalize">{selectedTicket.status?.replace("-", " ")}</span>
                 </Badge>
               </div>
 
@@ -445,40 +428,80 @@ export default function Dashboard() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <h4 className="font-medium text-slate-900 mb-1">Customer</h4>
-                  <p className="text-slate-600">{selectedTicket.customerName}</p>
-                  <p className="text-slate-500 text-sm">{selectedTicket.customerEmail}</p>
+                  <p className="text-slate-600">{selectedTicket.customer_name}</p>
+                  <p className="text-slate-500 text-sm">{selectedTicket.customer_email}</p>
                 </div>
                 <div>
-                  <h4 className="font-medium text-slate-900 mb-1">Created</h4>
-                  <p className="text-slate-600">{new Date(selectedTicket.createdAt).toLocaleString()}</p>
+                  <h4 className="font-medium text-slate-900 mb-1">Ticket ID</h4>
+                  <p className="text-slate-600">{selectedTicket.ticket_id}</p>
                 </div>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
-              {selectedTicket.priorityReason && (
+      {/* Edit Ticket Modal */}
+      {isEditDialogOpen && editTicket && (
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Edit Ticket</DialogTitle>
+              <DialogDescription>Update ticket details.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="edit_ticket_name">Ticket Name</Label>
+                <Input
+                  id="edit_ticket_name"
+                  value={editTicket.ticket_name}
+                  onChange={(e) => setEditTicket({ ...editTicket, ticket_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit_title">Title</Label>
+                <Input
+                  id="edit_title"
+                  value={editTicket.title}
+                  onChange={(e) => setEditTicket({ ...editTicket, title: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit_description">Description</Label>
+                <Textarea
+                  id="edit_description"
+                  value={editTicket.description}
+                  onChange={(e) => setEditTicket({ ...editTicket, description: e.target.value })}
+                  rows={4}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h4 className="font-medium text-slate-900 mb-2">Priority Analysis</h4>
-                  <p className="text-slate-600 bg-slate-50 p-3 rounded-lg">{selectedTicket.priorityReason}</p>
+                  <Label htmlFor="edit_customer_name">Customer Name</Label>
+                  <Input
+                    id="edit_customer_name"
+                    value={editTicket.customer_name}
+                    onChange={(e) => setEditTicket({ ...editTicket, customer_name: e.target.value })}
+                  />
                 </div>
-              )}
-
-              {selectedTicket.suggestedAssignee && (
                 <div>
-                  <h4 className="font-medium text-slate-900 mb-2">Suggested Assignment</h4>
-                  <div className="bg-blue-50 p-3 rounded-lg">
-                    <p className="font-medium text-blue-900">{selectedTicket.suggestedAssignee}</p>
-                    <p className="text-blue-700 text-sm mt-1">{selectedTicket.assignmentReason}</p>
-                  </div>
+                  <Label htmlFor="edit_customer_email">Customer Email</Label>
+                  <Input
+                    id="edit_customer_email"
+                    type="email"
+                    value={editTicket.customer_email}
+                    onChange={(e) => setEditTicket({ ...editTicket, customer_email: e.target.value })}
+                  />
                 </div>
-              )}
-
-              {selectedTicket.aiResponse && (
-                <div>
-                  <h4 className="font-medium text-slate-900 mb-2">AI-Generated Response</h4>
-                  <div className="bg-green-50 p-3 rounded-lg">
-                    <p className="text-green-800">{selectedTicket.aiResponse}</p>
-                  </div>
-                </div>
-              )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleEditTicket} className="bg-blue-600 hover:bg-blue-700">
+                  Save Changes
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
