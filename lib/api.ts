@@ -1,3 +1,5 @@
+// Fetch only tickets with pending states (open or in-progress)
+
 // lib/api.ts
 
 export type Ticket = {
@@ -39,4 +41,8 @@ export async function updateTicket(ticket_id: number, ticket: Partial<Ticket>): 
 
 export async function deleteTicket(ticket_id: number): Promise<void> {
   await fetch(`${API_URL}/tickets/${ticket_id}`, { method: "DELETE" })
+}
+export async function fetchPendingTickets(): Promise<Ticket[]> {
+  const res = await fetch(`${API_URL}/tickets/?pending=true`)
+  return res.json()
 }

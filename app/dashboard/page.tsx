@@ -1,5 +1,6 @@
+
 "use client"
-import { fetchTickets, createTicket, updateTicket, deleteTicket, type Ticket } from "@/lib/api"
+import { fetchTickets, createTicket, updateTicket, deleteTicket, type Ticket, fetchPendingTickets } from "@/lib/api"
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -150,6 +151,61 @@ export default function Dashboard() {
     }
   }
 
+    const [pendingTickets, setPendingTickets] = useState<Ticket[]>([])
+  // Fetch pending tickets (open or in-progress)
+  useEffect(() => {
+    fetchPendingTickets().then((data) => {
+      setPendingTickets(data)
+    })
+  }, [])
+      {/* Pending Tickets Section */}
+      <div className="mb-8">
+        <h2 className="text-xl font-bold mb-2">Pending Tickets</h2>
+        <div className="grid gap-4">
+          {pendingTickets.length === 0 ? (
+            <div className="text-slate-500">No pending tickets.</div>
+          ) : (
+            pendingTickets.map((ticket) => (
+              <Card key={ticket.ticket_id} className="hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg text-slate-900 mb-2">{ticket.title}</CardTitle>
+                      <CardDescription className="text-slate-600 line-clamp-2">{ticket.description}</CardDescription>
+                    </div>
+                    <div className="flex flex-col gap-2 ml-4">
+                      {ticket.priority && (
+                        <Badge className={priorityColors[ticket.priority as keyof typeof priorityColors] ?? ""} variant="outline">
+                          {ticket.priority}
+                        </Badge>
+                      )}
+                      <Badge className={statusColors[ticket.status as keyof typeof statusColors] ?? ""} variant="outline">
+                        {ticket.status ? getStatusIcon(ticket.status as TicketStatus) : null}
+                        <span className="ml-1 capitalize">{ticket.status?.replace("-", " ")}</span>
+                      </Badge>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4 text-sm text-slate-600">
+                      <div className="flex items-center gap-1">
+                        <User className="w-4 h-4" />
+                        {ticket.customer_name}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-4 h-4" />
+                        Ticket #{ticket.ticket_id}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
+      </div>
+      
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
@@ -508,4 +564,8 @@ export default function Dashboard() {
       )}
     </div>
   )
+}
+
+function getStatusIcon(arg0: string): import("react").ReactNode {
+  throw new Error("Function not implemented.")
 }
